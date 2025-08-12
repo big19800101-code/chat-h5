@@ -10,7 +10,7 @@ function isSameDay(a,b){
 }
 
 export default function App(){
-  const ROOM = 'lobby';                           // 默认房间
+  const ROOM = 'lobby';
   const [me] = useState("游客" + Math.floor(Math.random()*1000));
   const [input, setInput] = useState("");
   const [items, setItems] = useState([]);
@@ -32,7 +32,7 @@ export default function App(){
     })();
   }, []);
 
-  // 2) 订阅实时新增消息（仅本房间）
+  // 2) Realtime 订阅：只保留这一套（按房间过滤）
   useEffect(()=>{
     const channel = supabase
       .channel(`room:${ROOM}`)
@@ -85,7 +85,7 @@ export default function App(){
     if(!text) return;
     setInput("");
 
-    // 乐观更新（先插本地，失败再回滚）
+    // 乐观更新（先展示，再让服务端写库）
     const optimistic = { id: `tmp-${Date.now()}`, user_name: me, text, room: ROOM, created_at: new Date().toISOString() };
     setItems(v => [...v, optimistic]);
 
@@ -93,6 +93,7 @@ export default function App(){
       { room: ROOM, user_name: me, text }
     ]);
     if(error){
+      // 失败则回滚乐观消息
       setItems(v => v.filter(x => x.id !== optimistic.id));
       alert('发送失败：' + error.message);
     }
