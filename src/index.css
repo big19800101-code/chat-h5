@@ -1,0 +1,136 @@
+/* ---------- Design Tokens ---------- */
+:root{
+  --bg:#f7f7fb;
+  --panel:#ffffff;
+  --text:#121826;
+  --sub:#6b7280;
+  --brand:#3b82f6;
+  --brand-weak:#e0ecff;
+  --me:#10b981;            /* 你的气泡颜色 */
+  --me-weak:#d3f8ea;
+  --border:#e5e7eb;
+  --shadow:0 6px 20px rgba(0,0,0,.06);
+  --radius:14px;
+  --radius-sm:10px;
+  --spacing:12px;
+  --font: system-ui, -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial;
+}
+
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0b0d12;
+    --panel:#11131a;
+    --text:#e5e7eb;
+    --sub:#9aa3af;
+    --brand:#60a5fa;
+    --brand-weak:#1b263b;
+    --me:#34d399;
+    --me-weak:#0f3a2f;
+    --border:#1f2430;
+    --shadow:0 8px 24px rgba(0,0,0,.35);
+  }
+}
+
+*{ box-sizing:border-box }
+html,body,#root{ height:100% }
+body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--font); }
+
+/* ---------- Layout ---------- */
+.app{
+  max-width: 720px;
+  height: 100%;
+  margin: 0 auto;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+.header{
+  position: sticky; top:0;
+  display:flex; align-items:center; gap:10px;
+  padding:14px 16px; background:var(--bg);
+  backdrop-filter:saturate(180%) blur(8px);
+  border-bottom:1px solid var(--border);
+  z-index: 5;
+}
+
+.logo{
+  width:32px;height:32px;border-radius:8px;
+  background:linear-gradient(135deg,var(--brand),#8b5cf6);
+  box-shadow: var(--shadow);
+}
+
+.header h1{
+  font-size:16px; margin:0; font-weight:700;
+}
+.header .sub{ color:var(--sub); font-size:12px; }
+
+/* ---------- Chat panel ---------- */
+.panel{
+  background:var(--panel);
+  margin:16px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display:grid; grid-template-rows: 1fr auto;
+  min-height: calc(100dvh - 140px);
+}
+
+/* ---------- Message list ---------- */
+.list{
+  padding: 14px;
+  overflow:auto;
+  scroll-behavior:smooth;
+}
+
+.day-sep{
+  text-align:center; margin:14px 0; color:var(--sub); font-size:12px;
+}
+
+.row{ display:flex; gap:10px; margin:10px 0; align-items:flex-end; }
+.row.me{ flex-direction: row-reverse; }
+
+.avatar{
+  width:32px;height:32px;border-radius:50%;
+  background:var(--brand-weak); color:var(--brand);
+  display:grid; place-items:center; font-weight:700; font-size:12px;
+}
+
+.bubble{
+  max-width: 70%;
+  padding:10px 12px; border-radius: var(--radius-sm);
+  border:1px solid var(--border);
+  background:#fff;
+  word-break: break-word; line-height:1.4;
+}
+.me .bubble{
+  background:var(--me-weak);
+  border-color: transparent;
+}
+.meta{
+  color:var(--sub); font-size:11px; margin-top:4px;
+}
+
+/* ---------- Composer ---------- */
+.composer{
+  display:flex; gap:10px; padding:12px; border-top:1px solid var(--border);
+  background: var(--panel); border-radius: 0 0 var(--radius) var(--radius);
+}
+.input{
+  flex:1; border:1px solid var(--border); border-radius:12px; padding:10px 12px;
+  outline:none; background:transparent; color:var(--text);
+}
+.btn{
+  border:none; border-radius:12px; padding:10px 16px; cursor:pointer;
+  background:var(--brand); color:#fff; font-weight:600;
+}
+.btn:disabled{ opacity:.5; cursor:not-allowed }
+
+/* ---------- Utilities ---------- */
+.sticky-bottom{
+  position: sticky; bottom: 0;
+}
+.scroll-btn{
+  position:absolute; right:16px; bottom:76px;
+  padding:8px 10px; border-radius:999px; font-size:12px;
+  background:var(--panel); border:1px solid var(--border);
+  box-shadow: var(--shadow); cursor:pointer;
+}
