@@ -2,6 +2,66 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
 
+// === Pixel Clock（3x5 像素时钟）====
+const FONT = {
+  "0": ["111","101","101","101","111"],
+  "1": ["010","110","010","010","111"],
+  "2": ["111","001","111","100","111"],
+  "3": ["111","001","111","001","111"],
+  "4": ["101","101","111","001","001"],
+  "5": ["111","100","111","001","111"],
+  "6": ["111","100","111","101","111"],
+  "7": ["111","001","010","010","010"],
+  "8": ["111","101","111","101","111"],
+  "9": ["111","101","111","001","111"],
+  ":": ["000","010","000","010","000"],
+};
+function PixelChar({ ch, scale = 4 }) {
+  const pattern = FONT[ch] || ["000","000","000","000","000"];
+  const cell = Math.max(2, scale);
+  const gap = Math.max(1, Math.floor(scale / 3));
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: `repeat(${pattern[0].length}, ${cell}px)`,
+        gridAutoRows: `${cell}px`,
+        gap,
+      }}
+    >
+      {pattern.flatMap((row, r) =>
+        row.split("").map((bit, c) => (
+          <div
+            key={`${r}-${c}`}
+            style={{
+              background: bit === "1" ? "#00ff66" : "transparent",
+              boxShadow: bit === "1" ? "0 0 4px #00ff66, 0 0 8px #00ff66" : "none",
+              borderRadius: 1,
+            }}
+          />
+        ))
+      )}
+    </div>
+  );
+}
+function PixelClock({ scale = 4 }) {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const time = now.toLocaleTimeString("zh-CN", {
+    hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: scale * 1.2 }} title={time}>
+      {time.split("").map((ch, i) => <PixelChar key={i} ch={ch} scale={scale} />)}
+    </div>
+  );
+}
+// === /Pixel Clock ====
+
+
 // --- 颜色：固定 + 稳定“伪随机” ---
 const FIXED = {
   1: "#fecaca", // 红-浅
@@ -9,14 +69,8 @@ const FIXED = {
   3: "#ddd6fe", // 紫-浅
 };
 const PALETTE = [
-  "#fee2e2", // 红-浅
-  "#dcfce7", // 绿-浅
-  "#ede9fe", // 紫-浅
-  "#e0f2fe", // 蓝-浅
-  "#fff7ed", // 橙-浅
-  "#fef9c3", // 黄-浅
-  "#fce7f3", // 粉-浅
-  "#d1fae5", // 青-浅
+  "#fee2e2", "#dcfce7", "#ede9fe", "#e0f2fe",
+  "#fff7ed", "#fef9c3", "#fce7f3", "#d1fae5",
 ];
 function hashString(s) {
   let h = 0;
@@ -24,7 +78,6 @@ function hashString(s) {
   return h;
 }
 function colorFor(key) {
-  // key 可能是数字ID或字符串用户名
   const asNum = Number(key);
   if (!Number.isNaN(asNum) && FIXED[asNum]) return FIXED[asNum];
   const idx = hashString(String(key)) % PALETTE.length;
@@ -33,10 +86,12 @@ function colorFor(key) {
 
 // --- 小工具 ---
 function initials(name) {
-  return (name || "游客").slice(0, 2).toUpperCase();
+  return (name || "游客").slice(0, 2);
 }
 function fmtTime(d) {
-  return new Date(d).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(d).toLocaleTimeString("zh-CN", {
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  });
 }
 function isSameDay(a, b) {
   const da = new Date(a), db = new Date(b);
@@ -47,9 +102,32 @@ function isSameDay(a, b) {
   );
 }
 
+// --- 只保留最近 N 小时 ---
+const WINDOW_HOURS = 3;
+function windowStartISO() {
+  return new Date(Date.now() - WINDOW_HOURS * 60 * 60 * 1000).toISOString();
+}
+function trimToWindow(list) {
+  const since = new Date(windowStartISO()).getTime();
+  return list.filter(m => new Date(m.created_at).getTime() >= since);
+}
+function mergeById(prev, incoming) {
+  const map = new Map();
+  const put = (m) => {
+    const key = m.id ?? `${m.created_at}-${m.user_name}-${m.text}`;
+    const old = map.get(key);
+    map.set(key, { ...(old || {}), ...m });
+  };
+  prev.forEach(put);
+  incoming.forEach(put);
+  const out = Array.from(map.values())
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  return trimToWindow(out);
+}
+
 export default function App() {
   const ROOM = "lobby";
-  const [me] = useState("游客" + Math.floor(Math.random() * 1000)); // 若已接入登录，这里可换成稳定 user_name 或 user_id
+  const [me] = useState("游客" + Math.floor(Math.random() * 1000));
   const [input, setInput] = useState("");
   const [items, setItems] = useState([]);
 
@@ -57,46 +135,94 @@ export default function App() {
   const endRef = useRef(null);
   const [atBottom, setAtBottom] = useState(true);
 
-  // 1) 首次加载历史消息
+  const didInitialScroll = useRef(false);
+  const lastTsRef = useRef(null);
+  const pollTimerRef = useRef(null);
+
   useEffect(() => {
+    let isMounted = true;
+    const stopPolling = () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+    const startPolling = (fn) => {
+      if (!pollTimerRef.current) {
+        pollTimerRef.current = setInterval(fn, 2000);
+      }
+    };
+    const fetchLatest = async () => {
+      const base = supabase.from("messages")
+        .select("*").eq("room", ROOM)
+        .order("created_at", { ascending: true }).limit(200);
+      const cursor = lastTsRef.current || windowStartISO();
+      const q = cursor ? base.gte("created_at", cursor) : base;
+      const { data, error } = await q;
+      if (!isMounted) return;
+      if (error) return;
+      if (data && data.length) {
+        setItems(v => mergeById(v, data));
+        lastTsRef.current = data[data.length - 1].created_at;
+      }
+    };
     (async () => {
-      const { data, error } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("room", ROOM)
-        .order("created_at", { ascending: true })
-        .limit(200);
-      if (!error && data) setItems(data);
+      const { data, error } = await supabase.from("messages")
+        .select("*").eq("room", ROOM)
+        .gte("created_at", windowStartISO())
+        .order("created_at", { ascending: true }).limit(200);
+      if (!isMounted) return;
+      if (!error && data) {
+        setItems(trimToWindow(data));
+        if (data.length) lastTsRef.current = data[data.length - 1].created_at;
+        setTimeout(() => {
+          endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+          didInitialScroll.current = true;
+        }, 0);
+      }
     })();
-  }, []);
-
-  // 2) Realtime 订阅（按房间过滤）
-  useEffect(() => {
-    const channel = supabase
-      .channel(`room:${ROOM}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages", filter: `room=eq.${ROOM}` },
-        (payload) => setItems((v) => [...v, payload.new])
+    const channel = supabase.channel(`room:${ROOM}`)
+      .on("postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        (payload) => {
+          if (!isMounted) return;
+          const m = payload?.new;
+          if (m?.room === ROOM) {
+            setItems(v => mergeById(v, [m]));
+            lastTsRef.current = m.created_at;
+            stopPolling();
+          }
+        }
       )
-      .subscribe();
-
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") stopPolling();
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          startPolling(fetchLatest);
+        }
+      });
+    const fallback = setTimeout(() => {
+      if (!pollTimerRef.current) startPolling(fetchLatest);
+    }, 5000);
+    const janitor = setInterval(() => {
+      setItems(v => trimToWindow(v));
+      if (items.length === 0) lastTsRef.current = windowStartISO();
+    }, 60 * 1000);
     return () => {
+      isMounted = false;
+      clearTimeout(fallback);
+      clearInterval(janitor);
+      stopPolling();
       supabase.removeChannel(channel);
     };
   }, []);
 
-  // 分组：日期分割线
   const timeline = useMemo(() => {
     const out = [];
     let prev = null;
     items.forEach((m) => {
       if (!prev || !isSameDay(prev.created_at, m.created_at)) {
-        out.push({
-          type: "sep",
-          id: "sep-" + (m.id || m.created_at),
-          label: new Date(m.created_at).toLocaleDateString(),
-        });
+        out.push({ type: "sep", id: "sep-" + (m.id || m.created_at),
+          label: new Date(m.created_at).toLocaleDateString("zh-CN") });
       }
       out.push({ type: "msg", ...m });
       prev = m;
@@ -104,7 +230,6 @@ export default function App() {
     return out;
   }, [items]);
 
-  // 滚动 & 回到底部
   useEffect(() => {
     const el = listRef.current;
     function onScroll() {
@@ -116,40 +241,31 @@ export default function App() {
     return () => el?.removeEventListener("scroll", onScroll);
   }, []);
   useEffect(() => {
-    if (atBottom) endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (didInitialScroll.current && atBottom) {
+      endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
   }, [timeline, atBottom]);
 
-  // 发送
   async function send() {
     const text = input.trim();
     if (!text) return;
     setInput("");
-
-    // 如果你有稳定的 user_id，可以在这里一并写入
     const optimistic = {
-      id: `tmp-${Date.now()}`,
-      user_name: me,
-      text,
-      room: ROOM,
+      id: `tmp-${Date.now()}`, user_name: me, text, room: ROOM,
       created_at: new Date().toISOString(),
-      // user_id: 1, // 示例：接入登录后写入真实ID
     };
-    setItems((v) => [...v, optimistic]);
-
-    const { error } = await supabase.from("messages").insert([
-      {
-        room: ROOM,
-        user_name: me,
-        text,
-        // user_id: 1, // 同上
-      },
-    ]);
+    setItems(v => mergeById(v, [optimistic]));
+    const { data, error } = await supabase.from("messages")
+      .insert([{ room: ROOM, user_name: me, text }]).select();
     if (error) {
-      setItems((v) => v.filter((x) => x.id !== optimistic.id));
+      setItems(v => v.filter(x => x.id !== optimistic.id));
       alert("发送失败：" + error.message);
+    } else if (data && data[0]) {
+      setItems(v => mergeById([], v.map(x => x.id === optimistic.id ? data[0] : x)));
+      lastTsRef.current = data[0].created_at;
+      endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }
-
   function onKey(e) {
     const onlyEnter = e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey;
     const cmdEnter = e.key === "Enter" && (e.metaKey || e.ctrlKey);
@@ -161,11 +277,14 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="header">
+      <header className="header" style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div className="logo" />
         <div>
           <h1>聊天 H5</h1>
-          <div className="sub">Supabase 实时 · 按用户稳定着色</div>
+          <div className="sub">Supabase 实时 · 稳定着色 · 最近{WINDOW_HOURS}小时窗口</div>
+        </div>
+        <div style={{ marginLeft: "auto" }}>
+          <PixelClock scale={4} />
         </div>
       </header>
 
@@ -173,32 +292,20 @@ export default function App() {
         <div className="list" ref={listRef}>
           {timeline.map((node) => {
             if (node.type === "sep") {
-              return (
-                <div key={node.id} className="day-sep">
-                  — {node.label} —
-                </div>
-              );
+              return <div key={node.id} className="day-sep">— {node.label} —</div>;
             }
-
-            // 选择“着色键”：优先 user_id（若存在），否则 user_name
             const colorKey = node.user_id ?? node.user_name ?? "unknown";
             const bg = colorFor(colorKey);
             const mine = node.user_name === me;
-
             return (
               <div key={node.id} className={`row ${mine ? "me" : ""}`}>
-                <div
-                  className="avatar"
-                  title={node.user_name}
-                  style={{ background: bg, color: "#111" }}
-                >
+                <div className="avatar" title={node.user_name}
+                  style={{ background: bg, color: "#111" }}>
                   {initials(node.user_name)}
                 </div>
                 <div>
-                  <div
-                    className="bubble"
-                    style={{ background: bg, borderColor: "transparent", color: "#111" }}
-                  >
+                  <div className="bubble"
+                    style={{ background: bg, borderColor: "transparent", color: "#111" }}>
                     {node.text}
                   </div>
                   <div className="meta">
@@ -212,25 +319,16 @@ export default function App() {
         </div>
 
         <div className="composer">
-          <textarea
-            className="input"
-            rows={1}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKey}
-            placeholder="输入消息，Enter 发送 / Shift+Enter 换行"
-          />
-          <button className="btn" onClick={send} disabled={!input.trim()}>
-            发送
-          </button>
+          <textarea className="input" rows={1} value={input}
+            onChange={(e) => setInput(e.target.value)} onKeyDown={onKey}
+            placeholder="输入消息，Enter 发送 / Shift+Enter 换行" />
+          <button className="btn" onClick={send} disabled={!input.trim()}>发送</button>
         </div>
       </section>
 
       {!atBottom && (
-        <button
-          className="scroll-btn"
-          onClick={() => endRef.current?.scrollIntoView({ behavior: "smooth" })}
-        >
+        <button className="scroll-btn"
+          onClick={() => endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })}>
           回到底部
         </button>
       )}
